@@ -1,26 +1,26 @@
-# 1. Use a lightweight Python base image
+# 1. Use Python 3.11 (Matches your Mac version to prevent dependency errors)
 FROM python:3.11-slim
 
-# 2. Set the working directory inside the container
+# 2. Force Python to print logs immediately (Helps us debug if it crashes)
+ENV PYTHONUNBUFFERED=1
+
+# 3. Set the working directory inside the container
 WORKDIR /app
 
-# 3. Copy requirements first (to cache dependencies)
+# 4. Copy requirements file first
 COPY requirements.txt .
 
-# 4. Install dependencies
-# We add --no-cache-dir to keep the image small
+# 5. Install dependencies
+# Added default-timeout to prevent "ReadTimeoutError" on slow connections
 RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
-# 5. Copy the rest of your code
+# 6. Copy the rest of your code
 COPY . .
 
-# 6. RUN THE SEED SCRIPT (Crucial Step)
-# This generates the reference_embeddings/*.pkl files INSIDE the image.
-# So when you ship this, the "Brain" is already pre-loaded.
+# 7. Run the seed script to "bake" the AI models into the image
 RUN python seed_references.py
 
-# 7. Expose the port the app runs on
-EXPOSE 8000
-
-# 8. Command to run the app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# 8. Start the app (The Critical Fix)
+# We use "sh -c" so we can read the ${PORT} variable from Render.
+# If Render gives a port (usually 10000), we use it. If not, we use 8000.
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
