@@ -4,6 +4,11 @@ FROM python:3.11-slim
 # 2. Force Python to print logs immediately (Helps us debug if it crashes)
 ENV PYTHONUNBUFFERED=1
 
+# 2b. MEMORY FIX: Limit PyTorch threads to prevent memory bloat
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV TORCH_NUM_THREADS=1
+
 # 3. Set the working directory inside the container
 WORKDIR /app
 

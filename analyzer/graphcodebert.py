@@ -5,12 +5,29 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 class GraphCodeBERT:
     def __init__(self):
+        import gc
         # Using "Small" model to fit in Render Free Tier (512MB RAM)
         self.model_name = "huggingface/CodeBERTa-small-v1"
         
         print(f"Loading Analyzer Model: {self.model_name}...")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModel.from_pretrained(self.model_name)
+        
+        # Load model usually
+        model_fp32 = AutoModel.from_pretrained(self.model_name)
+        
+        # QUANTIZATION MAGIC: Compress model to int8 (4x smaller RAM)
+        print("📉 Quantizing model to reduce memory usage for Render...")
+        
+        # FIX: Explicitly set engine for ARM64/Mac/Container compatibility
+        torch.backends.quantized.engine = 'qnnpack'
+        
+        self.model = torch.quantization.quantize_dynamic(
+            model_fp32, {torch.nn.Linear}, dtype=torch.qint8
+        )
+        
+        del model_fp32
+        gc.collect()
+        
         self.model.eval() # Set to evaluation mode
 
     def get_embedding(self, code_snippet):
