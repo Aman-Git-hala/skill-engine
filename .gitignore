@@ -1,0 +1,20 @@
+# Python junk
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+env/
+.env
+
+# Mac system files
+.DS_Store
+
+# Large data files (We generate these in Docker, don't upload them)
+reference_embeddings/
+*.pkl
+
+# IDE settings
+.vscode/
+.idea/
