@@ -43,31 +43,59 @@ SKILL_MAP = {
     "SQL": [".sql", ".ddl"]
 }
 
-def generate_reference_if_missing(skill):
+def get_reference_embedding(skill):
+    """
+    Smart loader that checks for dimension mismatches and auto-heals.
+    """
+    # Create folder if missing
     if not os.path.exists("reference_embeddings"):
         os.makedirs("reference_embeddings")
 
+    # Normalize filename (e.g. "C++" -> "cpp.pkl")
     safe_name = skill.lower().replace("++", "plusplus").replace("#", "sharp").replace(" ", "")
     path = f"reference_embeddings/{safe_name}.pkl"
     
-    if not os.path.exists(path):
-        dummy_code = "def main(): print('hello world')"
-        emb = get_embedding(dummy_code)
+    embedding = None
+
+    # 1. Try to load existing file
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+                
+            # --- CRITICAL FIX: CHECK DIMENSIONS ---
+            # If it's the old "Big" model (2304) or corrupted, discard it.
+            # We expect 768 dimensions for CodeBERTa-small.
+            if hasattr(data, "shape") and (data.shape[0] == 768 or data.size == 768):
+                embedding = data
+            else:
+                print(f"⚠️  CORRUPT/OLD EMBEDDING FOUND FOR {skill} (Shape: {getattr(data, 'shape', 'Unknown')}). Deleting...")
+                os.remove(path)
+        except Exception as e:
+            print(f"⚠️  Error reading {path}: {e}. Deleting...")
+            if os.path.exists(path):
+                os.remove(path)
+
+    # 2. If missing or deleted, generate a fresh fallback
+    if embedding is None:
+        print(f"🔄 Generating fresh fallback embedding for {skill}...")
+        dummy_code = f"// Standard implementation reference for {skill}\nprint('Hello World');"
+        embedding = get_embedding(dummy_code)
+        
+        # Save it so we don't calculate again
         with open(path, "wb") as f:
-            pickle.dump(emb, f)
+            pickle.dump(embedding, f)
     
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    return embedding
 
 def analyze_user(username, skills, github_token):
-    results = {}
-    
     # 1. Fetch Repos
     print(f"🔍 Fetching repos for {username}...")
     repos = fetch_user_data(username, github_token)
     
     if not repos:
-        return {"error": "User not found or no public repos."}
+        yield {"error": "User not found or no public repos."}
+        return
 
     for skill in skills:
         print(f"  Analyzing skill: {skill}...")
@@ -87,28 +115,29 @@ def analyze_user(username, skills, github_token):
                 code_snippets.extend(found_files)
                 relevant_repos.append(repo)
             
-            # ⚡️ EARLY EXIT: If we have > 3 snippets, STOP searching other repos.
-            # We don't need to see ALL their code, just enough to judge.
+            # ⚡️ EARLY EXIT: If we have > 3 snippets, STOP searching.
             if len(code_snippets) >= 3:
                 break
         
         # 3. AI Analysis
-        ref_emb = generate_reference_if_missing(skill)
+        # Use our new Smart Loader
+        ref_emb = get_reference_embedding(skill)
+        
         user_embeddings = [get_embedding(code) for code in code_snippets]
         
         sim_score = 0.0
         evidence_label = "Weak"
         
         if user_embeddings:
-            sim_score = compute_similarity(user_embeddings, ref_emb)
+            # Aggregate multiple code snippets into one user profile (Mean Pooling)
+            user_agg = np.mean(user_embeddings, axis=0)
+            sim_score = compute_similarity(user_agg, ref_emb)
             
-        # ⚖️ CALIBRATION: Stricter Thresholds
-        # 0.75 means "Very similar to professional reference"
-        # 0.45 means "Vaguely similar"
+        # ⚖️ CALIBRATION
         if sim_score > 0.75: evidence_label = "Strong"
         elif sim_score > 0.45: evidence_label = "Moderate"
             
-        results[skill] = {
+        skill_result = {
             "semantic_similarity": { 
                 "score": round(sim_score, 2), 
                 "evidence": evidence_label 
@@ -118,5 +147,6 @@ def analyze_user(username, skills, github_token):
             "consistency": analyze_consistency(repos, skill),
             "recency": analyze_recency(relevant_repos)
         }
-        
-    return results
+
+        # Yield result for this skill immediately
+        yield {skill: skill_result}

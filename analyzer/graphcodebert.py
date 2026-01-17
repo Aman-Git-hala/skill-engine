@@ -1,61 +1,62 @@
 import torch
-from transformers import AutoTokenizer, AutoModel
 import numpy as np
+from transformers import AutoTokenizer, AutoModel
 from sklearn.metrics.pairwise import cosine_similarity
 
-# 1. Load the model GLOBALLY so we only do it once (saves RAM)
-print("⏳ Loading GraphCodeBERT (CPU)... this may take a minute...")
+class GraphCodeBERT:
+    def __init__(self):
+        # Using "Small" model to fit in Render Free Tier (512MB RAM)
+        self.model_name = "huggingface/CodeBERTa-small-v1"
+        
+        print(f"Loading Analyzer Model: {self.model_name}...")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModel.from_pretrained(self.model_name)
+        self.model.eval() # Set to evaluation mode
 
-# We use the specific Microsoft pre-trained model for code
-tokenizer = AutoTokenizer.from_pretrained("microsoft/graphcodebert-base")
-model = AutoModel.from_pretrained("microsoft/graphcodebert-base")
+    def get_embedding(self, code_snippet):
+        """
+        Converts a string of code into a dense vector (embedding).
+        """
+        if not code_snippet or not isinstance(code_snippet, str):
+            return np.zeros(768) # Return empty vector if code is invalid
 
-# Force CPU usage (Safety Rule: No Overheating)
-device = torch.device("cpu")
-model.to(device)
+        try:
+            inputs = self.tokenizer(
+                code_snippet, 
+                return_tensors="pt", 
+                truncation=True, 
+                max_length=512
+            )
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            
+            # Mean pooling to capture the overall semantic meaning
+            embedding = outputs.last_hidden_state.mean(dim=1).squeeze().numpy()
+            return embedding
+            
+        except Exception as e:
+            print(f"Error generating embedding: {e}")
+            return np.zeros(768)
 
-print("✅ Model Loaded.")
+# --- EXPORTED FUNCTIONS (To fix the ImportError) ---
 
+# 1. Create a global instance of the model
+_bert_instance = GraphCodeBERT()
+
+# 2. Expose the function so scorer.py can import it
 def get_embedding(code_snippet):
-    """
-    Converts a string of code into a mathematical vector.
-    """
-    if not code_snippet or not isinstance(code_snippet, str):
-        return np.zeros((768,)) # Return empty vector if code is bad
-        
-    # Truncate to 512 tokens. 
-    # If we don't truncate, the model will crash on large files.
-    inputs = tokenizer(code_snippet, return_tensors="pt", max_length=512, truncation=True, padding=True)
-    
-    # Move inputs to CPU
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    
-    with torch.no_grad(): # Disable gradient calculation to save massive RAM
-        outputs = model(**inputs)
-        # We take the embedding of the [CLS] token (the first one) 
-        # which represents the "whole meaning" of the code snippet.
-        embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-        
-    # Flatten to a simple 1D array
-    return embedding.flatten()
+    return _bert_instance.get_embedding(code_snippet)
 
-def compute_similarity(user_code_embeddings, reference_embedding):
+# 3. Expose the similarity function
+def compute_similarity(embedding1, embedding2):
     """
-    Compares the user's code vectors against the 'Gold Standard' reference.
+    Calculates cosine similarity between two embeddings.
     """
-    if not user_code_embeddings:
+    if embedding1 is None or embedding2 is None:
         return 0.0
+        
+    # Ensure they are numpy arrays
+    e1 = np.array(embedding1).reshape(1, -1)
+    e2 = np.array(embedding2).reshape(1, -1)
     
-    # Ensure formats are correct for scikit-learn
-    # We stack the user's multiple files into a matrix
-    user_matrix = np.vstack(user_code_embeddings)
-    
-    # Reshape reference to be a 1-row matrix
-    ref_matrix = reference_embedding.reshape(1, -1)
-    
-    # Calculate cosine similarity (0 to 1) for every file
-    scores = cosine_similarity(user_matrix, ref_matrix)
-    
-    # We return the AVERAGE similarity. 
-    # (You could also take max() if you want to be lenient)
-    return float(np.mean(scores))
+    return float(cosine_similarity(e1, e2)[0][0])

@@ -1,4 +1,13 @@
 import os
+import shutil
+
+# 1. DELETE OLD EMBEDDINGS (The "Nuclear" Option)
+if os.path.exists("reference_embeddings"):
+    shutil.rmtree("reference_embeddings")
+    print("✅ DELETED old reference_embeddings folder.")
+
+# 2. OVERWRITE seed_references.py with the CORRECT code
+correct_seed_code = """import os
 import torch
 import pickle
 import numpy as np
@@ -46,3 +55,13 @@ def generate_embeddings():
 
 if __name__ == "__main__":
     generate_embeddings()
+"""
+
+with open("seed_references.py", "w") as f:
+    f.write(correct_seed_code)
+    print("✅ OVERWROTE seed_references.py with correct Small Model code.")
+
+# 3. RUN THE GENERATOR
+print("🚀 RUNNING generation script now...")
+os.system("python seed_references.py")
+print("✅ DONE! You can now restart uvicorn.")
